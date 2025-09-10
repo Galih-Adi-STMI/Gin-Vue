@@ -1,0 +1,79 @@
+version: '3.8'
+services:
+  reverse-proxy:
+    image: traefik:latest
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker"
+      - "--providers.docker.exposedbydefault=false"
+    ports:
+      - "80:80"
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - goapp
+      - vue-client
+  goapp:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    image: goapp
+    expose:
+      - "8080"
+    ports:
+      - "8080:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.goapp.rule=Host(`localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.services.goapp.loadbalancer.server.port=8080"
+    env_file:
+      - .env
+    environment:
+      - ENV=dev
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+      - DB_SSLMODE=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    image: postgres:alpine3.20
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    command: postgres -c log_statement=none
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  vue-client:
+    build:
+      context: ./src-client
+      dockerfile: Dockerfile
+    image: vue-client
+    expose:
+      - "5173"
+    ports:
+      - "8082:5173" # Changed to avoid conflicts
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vue-client.rule=Host(`localhost`) && PathPrefix(`/`)"
+      - "traefik.http.services.vue-client.loadbalancer.server.port=5173"
+    volumes:
+      - ./src-client:/app
+      - /app/node_modules
+    depends_on:
+      - goapp
+volumes:
+  pg_data:
